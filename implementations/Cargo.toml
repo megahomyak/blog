@@ -1,0 +1,11 @@
+[package]
+name = "implementations"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+abstractions = { path = "../abstractions" }
+hotwatch = "0.4.6"
+redis = "0.21.5"
