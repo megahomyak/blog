@@ -4,7 +4,9 @@
             #title {
                 font-family: "Arial Black", Gadget, sans-serif;
                 color: #{{ title_color_code }};
-                font-size: 8rem;
+            }
+            li {
+                font-family: sans-serif;
             }
             body {
                 background-color: {{ background_color_code }};
@@ -15,9 +17,9 @@
     <body>
         <h1 id="title">{{ author_name }}'s blog</h1>
         <ul>
-            {%- for article in articles_list -%}
+            {%- for article in self.articles_list.iter() %}
                 <li><a href="{{ article.file_name }}">{{ article.title }}</a></li>
-            {%- endfor -%}
+            {% endfor -%}
         </ul>
     </body>
 </html>

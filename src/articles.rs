@@ -19,10 +19,14 @@ struct MinimalArticleInfo {
 }
 pub struct Articles {
     compiled_articles: HashMap<Rc<ArticleFileName>, MinimalArticleInfo>,
-    articles_list: BTreeMap<Rc<ModificationTime>, HashMap<Rc<ArticleFileName>, ArticleTitle>>,
+    articles_list: BTreeMap<Rc<ModificationTime>, HashMap<Rc<ArticleFileName>, Rc<ArticleTitle>>>,
     index_variants: [String; INDEX_VARIANTS_AMOUNT],
     author_name: String,
     base_path: PathBuf,
+}
+pub struct IndexArticleInfo {
+    pub file_name: Rc<ArticleFileName>,
+    pub title: Rc<ArticleTitle>,
 }
 
 impl Articles {
@@ -30,18 +34,26 @@ impl Articles {
         self.index_variants = compile_index_variants(
             self.articles_list
                 .values()
-                .map(|articles_map| articles_map.iter()),
+                .flat_map(|articles_map| {
+                    articles_map
+                        .iter()
+                        .map(|(file_name, title)| IndexArticleInfo {
+                            file_name: file_name.clone(),
+                            title: title.clone(),
+                        })
+                })
+                .collect(),
             &self.author_name,
         );
     }
 
-    pub fn remove(&mut self, file_name: Rc<String>) {
-        let article_info = self.compiled_articles.remove(&file_name).unwrap();
+    pub fn remove(&mut self, file_name: &String) {
+        let article_info = self.compiled_articles.remove(file_name).unwrap();
         let articles_map = self
             .articles_list
-            .get(&article_info.modification_time)
+            .get_mut(&article_info.modification_time)
             .unwrap();
-        articles_map.remove(&file_name).unwrap();
+        articles_map.remove(file_name).unwrap();
         if articles_map.is_empty() {
             self.articles_list.remove(&article_info.modification_time);
         }
@@ -50,13 +62,14 @@ impl Articles {
 
     pub fn rename(&mut self, old_name: String, new_name: Rc<String>) {
         let article_info = self.compiled_articles.remove(&old_name).unwrap();
-        self.compiled_articles
-            .insert(new_name.clone(), article_info);
         let articles_map = self
             .articles_list
             .get_mut(&article_info.modification_time)
             .unwrap();
-        articles_map.insert(new_name, articles_map.remove(&old_name).unwrap());
+        self.compiled_articles
+            .insert(new_name.clone(), article_info);
+        let article_title = articles_map.remove(&old_name).unwrap();
+        articles_map.insert(new_name, article_title);
         self.reload_index_variants();
     }
 
@@ -67,10 +80,8 @@ impl Articles {
             file_name,
             modification_time,
             title,
-            creation_time,
         } = compile_article(full_path, &self.author_name);
         let modification_time = Rc::new(modification_time);
-        let file_name = Rc::new(file_name);
         self.compiled_articles.insert(
             file_name.clone(),
             MinimalArticleInfo {
@@ -81,7 +92,7 @@ impl Articles {
         self.articles_list
             .entry(modification_time.clone())
             .or_insert_with(|| HashMap::new())
-            .insert(file_name.clone(), title);
+            .insert(file_name.clone(), title.clone());
         self.reload_index_variants();
     }
 }

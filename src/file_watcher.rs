@@ -15,11 +15,11 @@ impl WithFileName for PathBuf {
 }
 
 pub fn watch(path: PathBuf, articles: Arc<Mutex<Articles>>) {
-    let watcher = blocking::Hotwatch::new().unwrap();
-    watcher.watch(path, |event| {
+    let mut watcher = blocking::Hotwatch::new().unwrap();
+    watcher.watch(path, move |event| {
         match event {
             Event::Remove(path) => {
-                articles.lock().unwrap().remove(Rc::new(path.get_file_name()));
+                articles.lock().unwrap().remove(&path.get_file_name());
             },
             Event::Rename(from, to) => {
                 articles.lock().unwrap().rename(from.get_file_name(), Rc::new(to.get_file_name()));
@@ -30,5 +30,5 @@ pub fn watch(path: PathBuf, articles: Arc<Mutex<Articles>>) {
             _ => (),
         };
         blocking::Flow::Continue
-    });
+    }).unwrap();
 }
