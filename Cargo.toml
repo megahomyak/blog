@@ -1,6 +1,6 @@
 [package]
-name = "main"
-version = "0.1.0"
+name = "blog"
+version = "1.0.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -11,5 +11,8 @@ chrono = "0.4.19"
 askama = "0.11.1"
 pulldown-cmark = { version = "0.9.1", default-features = false, features = ["simd"] }
 hotwatch = "0.4.6"
+rand = "0.8.5"
+actix-files = "0.6.0"
+peeking_take_while = "1.0.0"
 
 [features]

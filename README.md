@@ -7,5 +7,8 @@ on the index page depends only on the file modification date. Each article shoul
 
 Articles should be written in Markdown to be cached and added to the index. You can use two
 Markdown extensions in your articles: strikethrough and footnotes. The title of the article is
-determined by the first Markdown heading that was found in the file (the filename is used if the
-heading wasn't found).
+determined by the first Markdown heading that was found in the file (if the heading wasn't found,
+the file name without the extension is used instead).
+
+Oh, and also it re-colors the index server-side every time it is accessed (done using a vector of
+all possible re-colors). Neat, isn't it?
