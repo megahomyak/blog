@@ -1,0 +1,145 @@
+# Stolen from https://github.com/nicolas-van/rust-cross-compile-example/ (and slightly edited)
+
+name: Rust
+
+on:
+  push:
+    tags:
+      - v[0-9]+.[0-9]+.[0-9]+
+
+env:
+  CARGO_TERM_COLOR: always
+
+defaults:
+  run:
+    # Necessary for windows
+    shell: bash
+
+jobs:
+  check-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: '0'  # =everything. Without it I cannot get the branch I need
+      - name: Check if the tagged commit comes from the main branch
+        run: git merge-base --is-ancestor $GITHUB_SHA origin/main
+
+  test:
+    needs: check-commit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Cargo cache
+        uses: actions/cache@v2
+        with:
+          path: |
+            ~/.cargo/registry
+            ./target
+          key: test-cargo-registry
+      - name: Run clippy
+        run: cargo clippy -- --deny clippy::all --deny clippy::pedantic --deny clippy::nursery
+      - name: Run tests
+        run: cargo test
+
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        # A list of all the targets
+        include:
+          - TARGET: x86_64-unknown-linux-gnu  # Tested in a debian container on a mac
+            OS: ubuntu-latest
+          - TARGET: aarch64-unknown-linux-gnu  # Tested on aws t4g.nano
+            OS: ubuntu-latest
+          - TARGET: armv7-unknown-linux-gnueabihf  # Raspberry pi 2-3-4, not tested
+            OS: ubuntu-latest
+          - TARGET: arm-unknown-linux-gnueabihf  # Raspberry pi 0-1, not tested
+            OS: ubuntu-latest
+          - TARGET: x86_64-apple-darwin   # Tested on a mac, is not properly signed so there are security warnings
+            OS: macos-latest
+          - TARGET: x86_64-pc-windows-gnu  # Tested on a windows machine
+            OS: windows-latest
+    needs: test
+    runs-on: ${{ matrix.OS }}
+    env:
+      NAME: blog
+      TARGET: ${{ matrix.TARGET }}
+      OS: ${{ matrix.OS }}
+    steps:
+      - uses: actions/checkout@v2
+      - name: Cargo cache
+        uses: actions/cache@v2
+        with:
+          path: |
+            ~/.cargo/registry
+            ./target
+          key: build-cargo-registry-${{matrix.TARGET}}
+      - name: Install and configure dependencies
+        run: |
+          # Dependencies are only needed on ubuntu as that's the only place where we make cross-compilation
+          if [[ $OS =~ ^ubuntu.*$ ]]; then
+            sudo apt-get install -qq crossbuild-essential-arm64 crossbuild-essential-armhf
+          fi
+
+          # Some additional configuration for cross-compilation on linux
+          cat >>~/.cargo/config <<EOF
+          [target.aarch64-unknown-linux-gnu]
+          linker = "aarch64-linux-gnu-gcc"
+          [target.aarch64-unknown-linux-musl]
+          linker = "aarch64-linux-gnu-gcc"
+          [target.armv7-unknown-linux-gnueabihf]
+          linker = "arm-linux-gnueabihf-gcc"
+          [target.armv7-unknown-linux-musleabihf]
+          linker = "arm-linux-gnueabihf-gcc"
+          [target.arm-unknown-linux-gnueabihf]
+          linker = "arm-linux-gnueabihf-gcc"
+          [target.arm-unknown-linux-musleabihf]
+          linker = "arm-linux-gnueabihf-gcc"
+          EOF
+      - name: Install rust target
+        run: rustup target add $TARGET
+      - name: Run build
+        run: cargo build --release --locked --target $TARGET
+      - name: Compress
+        run: |
+          mkdir -p ./artifacts
+          # Windows is the only OS using a different convention for executable file name
+          if [[ $OS =~ ^windows.*$ ]]; then
+              EXEC=$NAME.exe
+          else
+              EXEC=$NAME
+          fi
+          if [[ $GITHUB_REF_TYPE =~ ^tag$ ]]; then
+            TAG=$GITHUB_REF_NAME
+          else
+            TAG=$GITHUB_SHA
+          fi
+          mv ./target/$TARGET/release/$EXEC ./$EXEC
+          tar -czf ./artifacts/$NAME-$TARGET-$TAG.tar.gz $EXEC
+      - name: Archive artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: result
+          path: |
+            ./artifacts
+
+  # Deploys to github releases on tag
+  deploy:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Download artifacts
+        uses: actions/download-artifact@v2
+        with:
+          name: result
+          path: ./artifacts
+      - name: Prepare the release name
+        run: "echo \"X_RELEASE_NAME=\"$GITHUB_REF_NAME: $(git log -n 1 --pretty=format:%s $GITHUB_SHA)\"\" >> $GITHUB_ENV"
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: ${{ env.X_RELEASE_NAME }}
+          files: ./artifacts/*.tar.gz
