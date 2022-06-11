@@ -68,14 +68,17 @@ jobs:
       OS: ${{ matrix.OS }}
     steps:
       - uses: actions/checkout@v2
+        with:
+          path: ./repo
       - name: Cargo cache
         uses: actions/cache@v2
         with:
           path: |
             ~/.cargo/registry
-            ./target
+            ./repo/target
           key: build-cargo-registry-${{matrix.TARGET}}
       - name: Install and configure dependencies
+        working-directory: ./repo
         run: |
           # Dependencies are only needed on ubuntu as that's the only place where we make cross-compilation
           if [[ $OS =~ ^ubuntu.*$ ]]; then
@@ -98,12 +101,14 @@ jobs:
           linker = "arm-linux-gnueabihf-gcc"
           EOF
       - name: Install rust target
+        working-directory: ./repo
         run: rustup target add $TARGET
       - name: Run build
+        working-directory: ./repo
         run: cargo build --release --locked --target $TARGET
       - name: Compress
         run: |
-          mkdir -p ./artifacts
+          mkdir artifacts
           # Windows is the only OS using a different convention for executable file name
           if [[ $OS =~ ^windows.*$ ]]; then
               EXEC=$NAME.exe
@@ -115,7 +120,7 @@ jobs:
           else
             TAG=$GITHUB_SHA
           fi
-          mv ./target/$TARGET/release/$EXEC ./$EXEC
+          mv ./repo/target/$TARGET/release/$EXEC ./$EXEC
           tar -czf ./artifacts/$NAME-$TARGET-$TAG.tar.gz $EXEC
       - name: Archive artifact
         uses: actions/upload-artifact@v2
