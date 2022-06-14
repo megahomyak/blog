@@ -1,10 +1,9 @@
 use std::{
-    fmt::Display,
     path::Path,
     sync::{Arc, Mutex},
 };
 
-use crate::articles::Articles;
+use crate::context::Context;
 pub mod hotwatch;
 
 pub enum FileEvent<'event> {
@@ -23,12 +22,22 @@ pub enum FileEvent<'event> {
     },
 }
 
-pub trait FileWatcher<EventHandler>
+/// When dropped, must stop the running watcher thread
+pub trait WatchGuard<EventHandler, FilePath, Watcher: FileWatcher<EventHandler, FilePath, Self>> {
+    /// Starts the new watcher of the same type
+    fn new(self, path: FilePath, event_handler: EventHandler) -> Self {
+        Watcher::new(path, event_handler)
+    }
+}
+
+pub trait FileWatcher<EventHandler, FilePath, WatchGuard>
 where
-    EventHandler: FnMut(&FileEvent) + 'static,
+    EventHandler: FnMut(&FileEvent) + Send + 'static,
+    FilePath: AsRef<Path>,
+    WatchGuard: self::WatchGuard<EventHandler, FilePath, Self>,
 {
-    fn new(event_handler: EventHandler) -> Self;
-    fn watch(self, path: &Path) -> !;
+    /// Runs the watcher in a new thread, returning a handle to stop it
+    fn new(path: FilePath, event_handler: EventHandler) -> WatchGuard;
 }
 
 pub trait FileNameShortcut {
@@ -41,25 +50,27 @@ impl FileNameShortcut for Path {
     }
 }
 
-pub fn handle_event<AuthorName>(articles: &mut Arc<Mutex<Articles<AuthorName>>>, event: &FileEvent)
-where
-    AuthorName: Display,
+pub fn handle_event<ArticlesWatchGuard, ConfigWatchGuard>(
+    context: &mut Arc<Mutex<Context<ArticlesWatchGuard, ConfigWatchGuard>>>,
+    event: &FileEvent,
+) where
+    ArticlesWatchGuard: WatchGuard,
 {
     match event {
         FileEvent::Removed { path } => {
-            articles
+            context
                 .lock()
                 .unwrap()
                 .remove_article(&path.file_name_arc_str());
         }
         FileEvent::Renamed { from, to } => {
-            articles
+            context
                 .lock()
                 .unwrap()
                 .rename_article(&from.file_name_arc_str(), to.file_name_arc_str());
         }
         FileEvent::Changed { path } | FileEvent::Created { path } => {
-            articles
+            context
                 .lock()
                 .unwrap()
                 .update_article(&path.file_name_arc_str());

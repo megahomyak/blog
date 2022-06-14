@@ -1,15 +1,20 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    fmt::Display,
-    path::Path,
     sync::Arc,
 };
 
+use actix_web::dev::ServerHandle;
 use chrono::{DateTime, Local};
+use log::{error, info};
 use rand::prelude::SliceRandom;
+use simple_logger::SimpleLogger;
 
-use crate::page_compilers::{
-    compile_article, compile_index_variants, CompiledArticleInfo, ExtractBaseName,
+use crate::{
+    config::Config,
+    file_watcher,
+    page_compilers::{
+        compile_article, compile_index_variants, CompiledArticleInfo, ExtractBaseName,
+    },
 };
 
 pub type FileTime = DateTime<Local>;
@@ -32,32 +37,38 @@ impl ArticleTitle {
         .clone()
     }
 }
-pub struct Articles<AuthorName> {
+pub struct Context<ArticlesWatchGuard, ConfigWatchGuard> {
     compiled_articles: HashMap<Arc<ArticleFileName>, MinimalArticleInfo>,
     articles_list: BTreeMap<Arc<ModificationTime>, HashMap<Arc<ArticleFileName>, ArticleTitle>>,
     index_variants: Vec<String>,
-    author_name: AuthorName,
-    base_path: &'static Path,
+    config: Config,
+    server_handle: Option<ServerHandle>,
+    articles_watch_guard: Option<ArticlesWatchGuard>,
+    config_watch_guard: Option<ConfigWatchGuard>,
 }
 pub struct IndexArticleInfo {
     pub file_name: Arc<ArticleFileName>,
     pub title: Arc<str>,
 }
 
-impl<AuthorName> Articles<AuthorName>
+impl<ArticlesWatchGuard, ConfigWatchGuard> Context<ArticlesWatchGuard, ConfigWatchGuard>
 where
-    AuthorName: Display,
+    ArticlesWatchGuard: file_watcher::WatchGuard,
+    ConfigWatchGuard: file_watcher::WatchGuard,
 {
-    pub fn new(author_name: AuthorName, base_path: &'static Path) -> Self {
-        let article_file_names = base_path
+    pub fn new(config: Config) -> Self {
+        let article_file_names = config
+            .articles_directory
             .read_dir()
             .expect("`articles` directory was not found!");
         let mut instance = Self {
             compiled_articles: HashMap::new(),
             articles_list: BTreeMap::new(),
             index_variants: Vec::new(),
-            author_name,
-            base_path,
+            config,
+            server_handle: None,
+            articles_watch_guard: None,
+            config_watch_guard: None,
         };
         for entry in article_file_names {
             let file_name: Arc<ArticleFileName> =
@@ -83,7 +94,7 @@ where
                         })
                 })
                 .collect::<Vec<_>>(),
-            &self.author_name,
+            &self.config,
         );
     }
 
@@ -140,13 +151,13 @@ where
                     .remove(file_name);
             }
         }
-        let full_path = self.base_path.join(&file_name[..]);
+        let full_path = self.config.articles_directory.join(&file_name[..]);
         let CompiledArticleInfo {
             body,
             file_name,
             modification_time,
             title,
-        } = compile_article(&full_path, &self.author_name);
+        } = compile_article(&full_path, &self.config);
         let modification_time = Arc::new(modification_time);
         self.compiled_articles.insert(
             file_name.clone(),
@@ -164,5 +175,72 @@ where
     pub fn update_article(&mut self, file_name: &Arc<ArticleFileName>) {
         self.update_without_index_reload(file_name);
         self.reload_index_variants();
+    }
+
+    pub async fn set_host_name_and_port(&mut self, host_name: String, port: u16) {
+        let host_name_was_changed = host_name != self.config.host_name;
+        let port_was_changed = port != self.config.port;
+        let target = match (host_name_was_changed, port_was_changed) {
+            (true, true) => "host name and port were",
+            (false, false) => "",
+            (false, true) => "host name was",
+            (true, false) => "port was",
+        };
+        if !target.is_empty() {
+            self.config.host_name = host_name;
+            self.config.port = port;
+            info!("The {} changed. Restarting", target);
+            loop {
+                match &self.server_handle {
+                    None => (),
+                    Some(server_handle) => {
+                        server_handle.stop(true).await;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn set_date_format(&mut self, date_format: String) {
+        self.config.date_format = date_format;
+    }
+
+    pub fn set_log_level(&mut self, log_level: String) {
+        if log_level != self.config.log_level {
+            let log_level_filter = match &log_level.to_lowercase()[..] {
+                "off" => log::LevelFilter::Off,
+                "error" => log::LevelFilter::Error,
+                "warn" => log::LevelFilter::Warn,
+                "info" => log::LevelFilter::Info,
+                "debug" => log::LevelFilter::Debug,
+                "trace" => log::LevelFilter::Trace,
+                _ => {
+                    error!(
+                        r#"Log level's name isn't in \
+                           ["off", "error", "warn", "info", "debug", "trace"]! \
+                           (Case doesn't matter)"#
+                    );
+                    return;
+                }
+            };
+            self.config.log_level = log_level;
+            SimpleLogger::new()
+                .with_level(log_level_filter)
+                .init()
+                .unwrap();
+        }
+    }
+
+    pub const fn config(&self) -> &Config {
+        &self.config
+    }
+
+    pub fn set_server_handle(&mut self, server_handle: ServerHandle) {
+        self.server_handle = Some(server_handle);
+    }
+
+    pub fn set_articles_watch_guard(&mut self, articles_watcher_stopper: ArticlesWatchGuard) {
+        self.articles_watch_guard = Some(articles_watcher_stopper);
     }
 }

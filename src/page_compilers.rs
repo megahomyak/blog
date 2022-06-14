@@ -5,8 +5,8 @@ use peeking_take_while::PeekableExt;
 use pulldown_cmark::CowStr;
 
 use crate::{
-    articles::{ArticleTitle, FileTime, IndexArticleInfo, ModificationTime},
-    constants::{DATE_FORMAT, PAGE_COLORS},
+    config::Config,
+    context::{ArticleTitle, FileTime, IndexArticleInfo, ModificationTime},
     file_watcher::FileNameShortcut,
 };
 
@@ -42,10 +42,7 @@ impl ExtractBaseName for Arc<str> {
     }
 }
 
-pub fn compile_article<AuthorName>(path: &PathBuf, author_name: AuthorName) -> CompiledArticleInfo
-where
-    AuthorName: Display,
-{
+pub fn compile_article(path: &PathBuf, config: &Config) -> CompiledArticleInfo {
     let file_contents = fs::read_to_string(&path).unwrap();
     let mut parser = pulldown_cmark::Parser::new_ext(&file_contents, {
         let mut options = pulldown_cmark::Options::empty();
@@ -89,13 +86,13 @@ where
             let creation_time: FileTime = creation_time.into();
             let mut signature = format!(
                 r#"<p align="right"><em>- {}, {}"#,
-                author_name,
-                creation_time.format(DATE_FORMAT)
+                config.author_name,
+                creation_time.format(&config.date_format)
             );
             if creation_time.date() != modification_time.date() {
                 signature.push_str(&format!(
                     " (last edit at {})",
-                    modification_time.format(DATE_FORMAT)
+                    modification_time.format(&config.date_format)
                 ));
             }
             signature.push_str("</em></p>");
@@ -103,8 +100,8 @@ where
         } else {
             format!(
                 r#"<p align="right"><em>- {}, {}</em></p>"#,
-                author_name,
-                modification_time.format(DATE_FORMAT)
+                config.author_name,
+                modification_time.format(&config.date_format)
             )
         };
         pulldown_cmark::html::push_html(
@@ -140,23 +137,17 @@ where
 {
     articles_list: &'index_template [IndexArticleInfo],
     author_name: &'index_template AuthorName,
-    background_color_code: &'static str,
-    title_color_code: &'static str,
+    background_color_code: &'index_template str,
+    title_color_code: &'index_template str,
 }
 
-pub fn compile_index_variants<AuthorName>(
-    articles_list: &[IndexArticleInfo],
-    author_name: AuthorName,
-) -> Vec<String>
-where
-    AuthorName: Display,
-{
-    let mut index_variants = Vec::with_capacity(PAGE_COLORS.len());
-    for color in PAGE_COLORS {
+pub fn compile_index_variants(articles_list: &[IndexArticleInfo], config: &Config) -> Vec<String> {
+    let mut index_variants = Vec::with_capacity(config.index_page_colors.len());
+    for color in &config.index_page_colors[..] {
         index_variants.push(
             IndexTemplate {
                 articles_list,
-                author_name: &author_name,
+                author_name: &config.author_name,
                 background_color_code: color.background(),
                 title_color_code: color.title(),
             }
