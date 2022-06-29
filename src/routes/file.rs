@@ -30,7 +30,8 @@ pub async fn file(
 ) -> FileOrText {
     use FileOrText::{File, Text};
     let file_name: Arc<str> = path_arguments.into_inner().into();
-    match website.lock().unwrap().get_article(&file_name) {
+    let article = website.lock().unwrap().get_article(&file_name);
+    match article {
         Some(article) => Text(HttpResponse::Ok().body(article)),
         None => match NamedFile::open(
             website
