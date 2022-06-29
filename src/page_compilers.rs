@@ -1,4 +1,4 @@
-use std::{fmt::Display, fs, iter, path::PathBuf, sync::Arc};
+use std::{fmt::Display, fs, io, iter, path::PathBuf, sync::Arc};
 
 use askama::Template;
 use peeking_take_while::PeekableExt;
@@ -6,8 +6,8 @@ use pulldown_cmark::CowStr;
 
 use crate::{
     config::Config,
-    context::{ArticleTitle, FileTime, IndexArticleInfo, ModificationTime},
-    file_watcher::FileNameShortcut,
+    utils::FileNameShortcut,
+    website::{ArticleTitle, FileTime, IndexArticleInfo, ModificationTime},
 };
 
 pub struct CompiledArticleInfo {
@@ -42,8 +42,8 @@ impl ExtractBaseName for Arc<str> {
     }
 }
 
-pub fn compile_article(path: &PathBuf, config: &Config) -> CompiledArticleInfo {
-    let file_contents = fs::read_to_string(&path).unwrap();
+pub fn compile_article(path: &PathBuf, config: &Config) -> io::Result<CompiledArticleInfo> {
+    let file_contents = fs::read_to_string(&path)?;
     let mut parser = pulldown_cmark::Parser::new_ext(&file_contents, {
         let mut options = pulldown_cmark::Options::empty();
         options.insert(pulldown_cmark::Options::ENABLE_STRIKETHROUGH);
@@ -121,12 +121,12 @@ pub fn compile_article(path: &PathBuf, config: &Config) -> CompiledArticleInfo {
     }
     .render()
     .unwrap();
-    CompiledArticleInfo {
+    Ok(CompiledArticleInfo {
         title,
         file_name,
         body: compiled_body,
         modification_time,
-    }
+    })
 }
 
 #[derive(Template)]

@@ -2,3 +2,6 @@ target/
 articles/
 files/
 .cargo/
+notes.txt
+a.bat
+Session.vim

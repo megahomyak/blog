@@ -340,14 +340,15 @@ dependencies = [
  "askama",
  "chrono",
  "clap",
- "hotwatch",
  "log",
+ "notify",
  "peeking_take_while",
  "pulldown-cmark",
  "rand",
  "serde",
  "serde_json",
  "simple_logger",
+ "tokio",
 ]
 
 [[package]]
@@ -715,16 +716,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "62b467343b94ba476dcb2500d242dadbb39557df889310ac77c5d99100aaac33"
 dependencies = [
  "libc",
-]
-
-[[package]]
-name = "hotwatch"
-version = "0.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "39301670a6f5798b75f36a1b149a379a50df5aa7c71be50f4b41ec6eab445cb8"
-dependencies = [
- "log",
- "notify",
 ]
 
 [[package]]

@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use actix_files::NamedFile;
 use actix_web::{body::BoxBody, web, HttpRequest, HttpResponse, Responder};
 
-use crate::{context::Context, file_watcher};
+use crate::website::Website;
 
 #[allow(clippy::module_name_repetitions)]
 #[allow(clippy::large_enum_variant)]
@@ -24,16 +24,16 @@ impl Responder for FileOrText {
 }
 
 #[allow(clippy::unused_async)]
-pub async fn file<ArticlesWatchGuard, ConfigWatchGuard>(
-    context: web::Data<Mutex<Context<ArticlesWatchGuard, ConfigWatchGuard>>>,
+pub async fn file(
+    website: web::Data<Mutex<Website>>,
     path_arguments: web::Path<String>,
-) -> FileOrText where ArticlesWatchGuard: file_watcher::WatchGuard {
+) -> FileOrText {
     use FileOrText::{File, Text};
     let file_name: Arc<str> = path_arguments.into_inner().into();
-    match context.lock().unwrap().get_article(&file_name) {
+    match website.lock().unwrap().get_article(&file_name) {
         Some(article) => Text(HttpResponse::Ok().body(article)),
         None => match NamedFile::open(
-            context
+            website
                 .lock()
                 .unwrap()
                 .config()
