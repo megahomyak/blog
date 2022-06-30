@@ -126,7 +126,7 @@ impl Config {
             if !target.is_empty() {
                 self.host_name = host_name;
                 self.port = port;
-                info!("The {} changed. Restarting", target);
+                info!("{} changed. Restarting", target);
                 reload_server = true;
             }
         }
