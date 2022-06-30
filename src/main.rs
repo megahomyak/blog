@@ -9,7 +9,7 @@ use std::{
 use actix_web::{dev::Server, web, App, HttpServer};
 use clap::{crate_description, Parser, Subcommand};
 use config::Config;
-use log::error;
+use log::{error, warn};
 use notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher};
 use utils::{set_global_log_level, FileNameShortcut};
 use website::Website;
@@ -134,6 +134,7 @@ fn begin_watching(
     filesystem_entry_path: impl PartialEq<PathBuf> + Send + 'static,
     watch_context_maker: fn(&Config) -> WatchResult,
     mut event_receiver: impl FnMut(DebouncedEvent) + Send + 'static,
+    mut resource_reloader: impl FnMut() + Send + 'static,
 ) {
     thread::spawn(move || loop {
         while let Ok(event) = watch_context.lock().unwrap().event_receiver.recv() {
@@ -153,6 +154,7 @@ fn begin_watching(
                 break;
             }
         }
+        resource_reloader();
     });
 }
 
@@ -254,29 +256,33 @@ async fn main() -> io::Result<()> {
                 }
             },
             watch_articles,
-            move |event| {
-                match event {
-                    DebouncedEvent::Remove(path) => {
-                        website
-                            .lock()
-                            .unwrap()
-                            .remove_article(&path.file_name_arc_str());
-                    }
-                    DebouncedEvent::Rename(from, to) => {
-                        website
-                            .lock()
-                            .unwrap()
-                            .rename_article(&from.file_name_arc_str(), to.file_name_arc_str());
-                    }
-                    DebouncedEvent::Write(path) | DebouncedEvent::Create(path) => {
-                        website
-                            .lock()
-                            .unwrap()
-                            .update_article(&path.file_name_arc_str());
-                    }
-                    _ => (),
-                };
+            {
+                let website = website.clone();
+                move |event| {
+                    match event {
+                        DebouncedEvent::Remove(path) => {
+                            website
+                                .lock()
+                                .unwrap()
+                                .remove_article(&path.file_name_arc_str());
+                        }
+                        DebouncedEvent::Rename(from, to) => {
+                            website
+                                .lock()
+                                .unwrap()
+                                .rename_article(&from.file_name_arc_str(), to.file_name_arc_str());
+                        }
+                        DebouncedEvent::Write(path) | DebouncedEvent::Create(path) => {
+                            website
+                                .lock()
+                                .unwrap()
+                                .update_article(&path.file_name_arc_str());
+                        }
+                        _ => (),
+                    };
+                }
             },
+            move || website.lock().unwrap().reload_articles_and_index(),
         );
     }
 
@@ -288,30 +294,55 @@ async fn main() -> io::Result<()> {
             let config_watch_context = config_watch_context.clone();
             let website = website.clone();
             let articles_watch_context = articles_watch_context.clone();
+
+            let reload_config = {
+                let config_watch_context = config_watch_context.clone();
+                let website = website.clone();
+                let articles_watch_context = articles_watch_context.clone();
+                move || {
+                    match fs::read_to_string(Path::new(CONFIG_FILE_NAME)) {
+                        Ok(file_contents) => match serde_json::from_str(&file_contents) {
+                            Ok(new_config) => website.lock().unwrap().config().update(
+                                new_config,
+                                &mut server_handle,
+                                &website,
+                                &articles_watch_context,
+                                &config_watch_context,
+                            ),
+                            Err(error) => warn!(
+                                "Updated configuration file is poorly formatted! \
+                                Consider fixing it. Using the old configuration file \
+                                for now. Details: {}",
+                                error
+                            ),
+                        },
+                        Err(error) => error!(
+                            "Configuration file update was noticed, but the file \
+                            couldn't be read. Details: {}",
+                            error
+                        ),
+                    };
+                }
+            };
+
             begin_watching(
-                config_watch_context.clone(),
+                config_watch_context,
                 website.clone(),
                 "Configuration file",
                 Path::new(CONFIG_FILE_NAME),
                 watch_config,
-                move |event| {
-                    match event {
-                        DebouncedEvent::Write(path) | DebouncedEvent::Create(path) => {
-                            if let Ok(file_contents) = fs::read_to_string(path) {
-                                if let Ok(new_config) = serde_json::from_str(&file_contents) {
-                                    website.lock().unwrap().config().update(
-                                        new_config,
-                                        &mut server_handle,
-                                        &website,
-                                        &articles_watch_context,
-                                        &config_watch_context,
-                                    );
-                                }
+                {
+                    let mut reload_config = reload_config.clone();
+                    move |event| {
+                        match event {
+                            DebouncedEvent::Write(_path) | DebouncedEvent::Create(_path) => {
+                                reload_config();
                             }
-                        }
-                        _ => (),
-                    };
+                            _ => (),
+                        };
+                    }
                 },
+                reload_config,
             );
         }
 

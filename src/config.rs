@@ -81,7 +81,7 @@ impl Base<PathBuf> {
 pub type Config = Base<AbsolutePath<PathBuf>>;
 
 impl Config {
-    #[deny(warnings)] // Because unused variables will mean that I haven't invoked all the handlers
+    #[deny(unused_variables)] // Unused variables will mean that I haven't handled everything
     #[allow(clippy::too_many_lines)]
     #[allow(clippy::cognitive_complexity)]
     pub fn update(
