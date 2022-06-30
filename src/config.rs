@@ -1,4 +1,5 @@
 use std::{
+    io,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
@@ -6,17 +7,17 @@ use std::{
 use actix_web::dev::ServerHandle;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
-use simple_logger::SimpleLogger;
 
 use crate::{
-    page_colors::PageColors, watch_articles, watch_config, website::Website, WatchContext,
+    page_colors::PageColors, utils::{AbsolutePath, set_global_log_level}, watch_articles, watch_config, website::Website,
+    WatchContext,
 };
 
-#[derive(Serialize, Deserialize)]
-pub struct Config {
+#[derive(Deserialize, Serialize)]
+pub struct Base<ArticlesDirectoryPath> {
     pub author_name: String,
     pub index_page_colors: Vec<PageColors>,
-    pub articles_directory: PathBuf,
+    pub articles_directory: ArticlesDirectoryPath,
     pub files_directory: PathBuf,
     pub date_format: String,
     pub host_name: String,
@@ -25,7 +26,7 @@ pub struct Config {
     pub file_watcher_delay_in_milliseconds: u64,
 }
 
-impl Config {
+impl Base<PathBuf> {
     /// Returns a sample configuration, which should __not__ be used in production (because it
     /// lacks the author's name)
     pub fn sample() -> Self {
@@ -49,11 +50,43 @@ impl Config {
         }
     }
 
+    /// Upgrades itself to [`BaseConfig<AbsolutePath<PathBuf>>`],
+    /// returning an error if `articles_directory.canonicalize()` failed.
+    pub fn upgrade(self) -> Result<Config, (io::Error, Self)> {
+        let articles_directory = {
+            if AbsolutePath::validate(&self.articles_directory).is_ok() {
+                AbsolutePath::new(self.articles_directory).unwrap()
+            } else {
+                match self.articles_directory.canonicalize() {
+                    Ok(articles_directory) => AbsolutePath::new(articles_directory).unwrap(),
+                    Err(error) => return Err((error, self)),
+                }
+            }
+        };
+        Ok(Config {
+            articles_directory,
+            port: self.port,
+            host_name: self.host_name,
+            log_level: self.log_level,
+            author_name: self.author_name,
+            date_format: self.date_format,
+            files_directory: self.files_directory,
+            index_page_colors: self.index_page_colors,
+            file_watcher_delay_in_milliseconds: self.file_watcher_delay_in_milliseconds,
+        })
+    }
+}
+
+/// Working config that should be used in the server's code
+pub type Config = Base<AbsolutePath<PathBuf>>;
+
+impl Config {
     #[deny(warnings)] // Because unused variables will mean that I haven't invoked all the handlers
     #[allow(clippy::too_many_lines)]
+    #[allow(clippy::cognitive_complexity)]
     pub fn update(
         &mut self,
-        new_config: Self,
+        new_config: Base<PathBuf>,
         server_handle: &mut ServerHandle,
         website: &Mutex<Website>,
         articles_watch_context: &Arc<Mutex<WatchContext>>,
@@ -67,7 +100,7 @@ impl Config {
                 }
             };
         }
-        let Config {
+        let Base {
             author_name,
             index_page_colors,
             articles_directory,
@@ -98,28 +131,7 @@ impl Config {
             }
         }
         {
-            let log_level_filter = match &log_level.to_lowercase()[..] {
-                "off" => Some(log::LevelFilter::Off),
-                "error" => Some(log::LevelFilter::Error),
-                "warn" => Some(log::LevelFilter::Warn),
-                "info" => Some(log::LevelFilter::Info),
-                "debug" => Some(log::LevelFilter::Debug),
-                "trace" => Some(log::LevelFilter::Trace),
-                _ => {
-                    error!(
-                        r#"Log level's lowercase representation isn't in \
-                           ["off", "error", "warn", "info", "debug", "trace"]!
-                           Using the old log level for now"#
-                    );
-                    None
-                }
-            };
-            if let Some(log_level_filter) = log_level_filter {
-                SimpleLogger::new()
-                    .with_level(log_level_filter)
-                    .init()
-                    .unwrap();
-            }
+            set_global_log_level(log_level);
         };
         if_changed!(author_name, {
             reload_articles = true;
@@ -127,21 +139,38 @@ impl Config {
         if_changed!(index_page_colors, {
             reload_index = true;
         });
-        if_changed!(articles_directory, {
-            match watch_articles(self) {
-                Ok(new_context) => {
-                    *articles_watch_context.lock().unwrap() = new_context;
-                    reload_articles = true;
-                    reload_index = true;
-                }
+        let articles_directory = match AbsolutePath::new(articles_directory) {
+            Ok(articles_directory) => Some(articles_directory),
+            Err(articles_directory) => match articles_directory.canonicalize() {
+                Ok(articles_directory) => Some(AbsolutePath::new(articles_directory).unwrap()),
                 Err(error) => {
                     error!(
-                        "An error occured while changing the articles directory: {}",
+                        "An error occured while getting the full path \
+                        to the articles directory (which was changed in the config): {}",
                         error
                     );
+                    None
+                }
+            },
+        };
+        if let Some(articles_directory) = articles_directory {
+            if articles_directory.as_ref() == self.articles_directory.as_ref() {
+                match watch_articles(self) {
+                    Ok(new_context) => {
+                        *articles_watch_context.lock().unwrap() = new_context;
+                        reload_articles = true;
+                        reload_index = true;
+                        self.articles_directory = articles_directory;
+                    }
+                    Err(error) => {
+                        error!(
+                            "An error occured while changing the articles directory: {}",
+                            error
+                        );
+                    }
                 }
             }
-        });
+        }
         if_changed!(files_directory, {});
         if_changed!(date_format, {
             reload_articles = true;

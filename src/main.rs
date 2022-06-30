@@ -1,6 +1,6 @@
 use std::{
     fs, io,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{mpsc, Arc, Mutex},
     thread,
     time::Duration,
@@ -11,7 +11,7 @@ use clap::{crate_description, Parser, Subcommand};
 use config::Config;
 use log::error;
 use notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher};
-use utils::FileNameShortcut;
+use utils::{set_global_log_level, FileNameShortcut};
 use website::Website;
 
 mod config;
@@ -40,7 +40,7 @@ enum Command {
     Run,
 }
 
-const CONFIG_FILE_NAME: &str = "config.toml";
+const CONFIG_FILE_NAME: &str = "config.json";
 
 fn run_server(website: &Arc<Mutex<Website>>) -> Server {
     let mut config_guard = website.lock().unwrap();
@@ -87,12 +87,16 @@ pub fn watch(config: &Config, path: &Path, recursive_mode: RecursiveMode) -> Wat
 
 #[allow(clippy::missing_errors_doc)]
 pub fn watch_articles(config: &Config) -> WatchResult {
-    if Path::new(&config.articles_directory).is_dir() {
-        watch(config, &config.articles_directory, RecursiveMode::Recursive)
+    if config.articles_directory.as_ref().is_dir() {
+        watch(
+            config,
+            config.articles_directory.as_ref(),
+            RecursiveMode::Recursive,
+        )
     } else {
         Err(notify::Error::Generic(format!(
             "{:?} is not a directory!",
-            &config.articles_directory
+            config.articles_directory.as_ref()
         )))
     }
 }
@@ -123,6 +127,35 @@ macro_rules! clean_panic {
     }
 }
 
+fn begin_watching(
+    watch_context: Arc<Mutex<WatchContext>>,
+    website: Arc<Mutex<Website>>,
+    filesystem_entry_name: &'static str,
+    filesystem_entry_path: impl PartialEq<PathBuf> + Send + 'static,
+    watch_context_maker: fn(&Config) -> WatchResult,
+    mut event_receiver: impl FnMut(DebouncedEvent) + Send + 'static,
+) {
+    thread::spawn(move || loop {
+        while let Ok(event) = watch_context.lock().unwrap().event_receiver.recv() {
+            match event {
+                DebouncedEvent::Remove(path) if filesystem_entry_path == path => break,
+                event => event_receiver(event),
+            }
+        }
+        error!(
+            "{} seems to be deleted. Waiting until it will be created...",
+            filesystem_entry_name
+        );
+        loop {
+            thread::sleep(Duration::from_secs(1));
+            if let Ok(new_context) = watch_context_maker(website.lock().unwrap().config()) {
+                *watch_context.lock().unwrap() = new_context;
+                break;
+            }
+        }
+    });
+}
+
 #[actix_web::main]
 async fn main() -> io::Result<()> {
     let args = Args::parse();
@@ -138,74 +171,96 @@ async fn main() -> io::Result<()> {
             );
             fs::write(
                 config_path,
-                serde_json::to_string_pretty(&Config::sample()).unwrap(),
+                serde_json::to_string_pretty(&config::Base::<PathBuf>::sample()).unwrap(),
             )
             .unwrap();
             return Ok(());
         }
     }
 
-    let config: Config = serde_json::from_str(
-        &fs::read_to_string(Path::new(CONFIG_FILE_NAME)).unwrap_or_else(|_| {
+    let config: config::Base<PathBuf> = serde_json::from_str(
+        &fs::read_to_string(Path::new(CONFIG_FILE_NAME)).unwrap_or_else(|error| {
             clean_panic!(
-                "Configuration file wasn't found! Consider creating a sample configuration using \
-                `blog create_sample_config`, and then editing it."
+                "Configuration file isn't accessble! Consider creating a sample configuration \
+                using `blog create_sample_config`, and then editing it. Details: {}",
+                error
             );
         }),
     )
-    .unwrap_or_else(|_| {
+    .unwrap_or_else(|error| {
         clean_panic!(
-            "Configuration file is poorly formatted! Fix it and try to `run` the program again."
+            "Configuration file is poorly formatted!
+            Fix it and try to `run` the program again. Details: {}",
+            error
         );
     });
-    let articles_watch_context =
-        Arc::new(Mutex::new(watch_articles(&config).unwrap_or_else(|_| {
+    set_global_log_level(&config.log_level);
+    let config = config.upgrade().unwrap_or_else(|(error, config)| {
+        clean_panic!(
+            "Articles directory path (`{:?}`) cannot be expanded! Details: {}",
+            config.articles_directory,
+            error
+        );
+    });
+    let articles_watch_context = Arc::new(Mutex::new(watch_articles(&config).unwrap_or_else(
+        |error| {
             clean_panic!(
-                "Articles directory `{:?}` was not found! Consider creating it",
-                config.articles_directory
+                "Articles directory `{:?}` is not accessible! Consider creating it. Details: {}",
+                config.articles_directory.as_ref(),
+                error
             );
-        })));
+        },
+    )));
+
+    let config_watch_context = Arc::new(Mutex::new(watch_articles(&config).unwrap_or_else(
+        |error| {
+            clean_panic!(
+                "Configuration file `{}` is not accessible! This is a really rare occasion that
+                happened here. Consider creating the configuration file (probably, using the `blog
+                create-sample-config` command). Details: {}",
+                CONFIG_FILE_NAME,
+                error
+            );
+        },
+    )));
 
     let website = Arc::new(Mutex::new(Website::new(config)));
 
-    let config_watch_context = Arc::new(Mutex::new(
-        watch_articles(website.lock().unwrap().config()).unwrap_or_else(|_| {
-            clean_panic!(
-                "Configuration file `{}` was not found! This is a really rare occasion that
-                happened here. Consider creating the configuration file (probably, using the `blog
-                create-sample-config` command)",
-                CONFIG_FILE_NAME
-            );
-        }),
-    ));
-
-    thread::spawn({
-        let articles_watch_context = articles_watch_context.clone();
+    {
         let website = website.clone();
-        move || {
-            while let Ok(event) = articles_watch_context.lock().unwrap().event_receiver.recv() {
+        begin_watching(
+            articles_watch_context.clone(),
+            website.clone(),
+            "Articles directory",
+            {
+                struct ArticlesDirectory {
+                    owner: Arc<Mutex<Website>>,
+                }
+
+                impl PartialEq<PathBuf> for ArticlesDirectory {
+                    fn eq(&self, other: &PathBuf) -> bool {
+                        self.owner
+                            .lock()
+                            .unwrap()
+                            .config()
+                            .articles_directory
+                            .as_ref()
+                            == other
+                    }
+                }
+
+                ArticlesDirectory {
+                    owner: website.clone(),
+                }
+            },
+            watch_articles,
+            move |event| {
                 match event {
                     DebouncedEvent::Remove(path) => {
-                        if path == website.lock().unwrap().config().articles_directory {
-                            error!(
-                                "Articles directory seems to be deleted. Waiting until it will be \
-                                created..."
-                            );
-                            loop {
-                                match watch_articles(website.lock().unwrap().config()) {
-                                    Ok(new_context) => {
-                                        *articles_watch_context.lock().unwrap() = new_context;
-                                        break;
-                                    }
-                                    Err(_error) => thread::sleep(Duration::from_secs(1)),
-                                }
-                            }
-                        } else {
-                            website
-                                .lock()
-                                .unwrap()
-                                .remove_article(&path.file_name_arc_str());
-                        }
+                        website
+                            .lock()
+                            .unwrap()
+                            .remove_article(&path.file_name_arc_str());
                     }
                     DebouncedEvent::Rename(from, to) => {
                         website
@@ -221,20 +276,25 @@ async fn main() -> io::Result<()> {
                     }
                     _ => (),
                 };
-            }
-        }
-    });
+            },
+        );
+    }
 
     loop {
         let server = run_server(&website);
         let mut server_handle = server.handle();
 
-        thread::spawn({
-            let articles_watch_context = articles_watch_context.clone();
-            let website = website.clone();
+        {
             let config_watch_context = config_watch_context.clone();
-            move || {
-                while let Ok(event) = config_watch_context.lock().unwrap().event_receiver.recv() {
+            let website = website.clone();
+            let articles_watch_context = articles_watch_context.clone();
+            begin_watching(
+                config_watch_context.clone(),
+                website.clone(),
+                "Configuration file",
+                Path::new(CONFIG_FILE_NAME),
+                watch_config,
+                move |event| {
                     match event {
                         DebouncedEvent::Write(path) | DebouncedEvent::Create(path) => {
                             if let Ok(file_contents) = fs::read_to_string(path) {
@@ -249,28 +309,11 @@ async fn main() -> io::Result<()> {
                                 }
                             }
                         }
-                        DebouncedEvent::Remove(path) => {
-                            if path == Path::new(CONFIG_FILE_NAME) {
-                                error!(
-                                    "Config file seems to be deleted. \
-                                    Waiting until it will be created..."
-                                );
-                                loop {
-                                    match watch_config(website.lock().unwrap().config()) {
-                                        Ok(new_context) => {
-                                            *config_watch_context.lock().unwrap() = new_context;
-                                            break;
-                                        }
-                                        Err(_error) => thread::sleep(Duration::from_secs(1)),
-                                    }
-                                }
-                            }
-                        }
                         _ => (),
                     };
-                }
-            }
-        });
+                },
+            );
+        }
 
         server.await?;
     }

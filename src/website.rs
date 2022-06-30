@@ -127,13 +127,14 @@ impl Website {
                 .unwrap()
                 .remove(file_name);
         }
-        let full_path = self.config.articles_directory.join(&file_name[..]);
+        let full_path = self.config.articles_directory.as_ref().join(&file_name[..]);
         if let Ok(CompiledArticleInfo {
             body,
             file_name,
             modification_time,
             title,
-        }) = compile_article(&full_path, &self.config) {
+        }) = compile_article(&full_path, &self.config)
+        {
             let modification_time = Arc::new(modification_time);
             self.compiled_articles.insert(
                 file_name.clone(),
@@ -161,7 +162,7 @@ impl Website {
     pub fn reload_articles(&mut self) {
         self.articles_list = BTreeMap::new();
         self.compiled_articles = HashMap::new();
-        if let Ok(article_file_names) = self.config.articles_directory.read_dir() {
+        if let Ok(article_file_names) = self.config.articles_directory.as_ref().read_dir() {
             for entry in article_file_names {
                 let file_name: Arc<ArticleFileName> =
                     entry.unwrap().file_name().to_str().unwrap().into();
@@ -171,7 +172,7 @@ impl Website {
             error!(
                 "Articles directory `{:?}` was not found! Cannot reload the articles, \
                  using the empty list instead",
-                self.config().articles_directory,
+                self.config().articles_directory.as_ref(),
             );
         }
     }
