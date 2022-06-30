@@ -86,7 +86,7 @@ pub fn compile_article(path: &PathBuf, config: &Config) -> io::Result<CompiledAr
             let creation_time: FileTime = creation_time.into();
             let mut signature = format!(
                 r#"<p align="right"><em>- {}, {}"#,
-                config.author_name,
+                html_escape::encode_text(&config.author_name),
                 creation_time.format(&config.date_format)
             );
             if creation_time.date() != modification_time.date() {
@@ -100,7 +100,7 @@ pub fn compile_article(path: &PathBuf, config: &Config) -> io::Result<CompiledAr
         } else {
             format!(
                 r#"<p align="right"><em>- {}, {}</em></p>"#,
-                config.author_name,
+                html_escape::encode_text(&config.author_name),
                 modification_time.format(&config.date_format)
             )
         };

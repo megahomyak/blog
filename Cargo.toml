@@ -20,5 +20,6 @@ log = "0.4.17"
 simple_logger = "2.1.0"
 tokio = "1.19.2"
 notify = "4.0.17"
+html-escape = "0.2.11"
 
 [features]
