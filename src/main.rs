@@ -248,7 +248,7 @@ async fn main() -> io::Result<()> {
         },
     )));
 
-    let config_watch_context = Arc::new(Mutex::new(watch_articles(&config).unwrap_or_else(
+    let config_watch_context = Arc::new(Mutex::new(watch_config(&config).unwrap_or_else(
         |error| {
             clean_panic!(
                 "Configuration file `{}` is not accessible! This is a really rare occasion that
