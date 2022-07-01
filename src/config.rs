@@ -9,8 +9,8 @@ use log::{error, info};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    page_colors::PageColors, utils::set_global_log_level, watch_articles, watch_config,
-    website::Website, WatchContext, absolute_path::AbsolutePath,
+    absolute_path::AbsolutePath, page_colors::PageColors, utils::set_global_log_level,
+    watch_articles, watch_config, website::Website, WatchContext,
 };
 
 #[derive(Deserialize, Serialize)]
@@ -57,12 +57,14 @@ impl Base<PathBuf> {
             match AbsolutePath::new(self.articles_directory) {
                 Ok(articles_directory) => articles_directory,
                 Err(old_articles_directory) => match old_articles_directory.canonicalize() {
-                    Ok(old_articles_directory) => AbsolutePath::new(old_articles_directory).unwrap(),
+                    Ok(old_articles_directory) => {
+                        AbsolutePath::new(old_articles_directory).unwrap()
+                    }
                     Err(error) => {
                         self.articles_directory = old_articles_directory;
                         return Err((error, self));
-                    },
-                }
+                    }
+                },
             }
         };
         Ok(Config {
@@ -141,34 +143,40 @@ impl Config {
         if_changed!(index_page_colors, {
             reload_index = true;
         });
-        let articles_directory = match AbsolutePath::new(articles_directory) {
-            Ok(articles_directory) => Some(articles_directory),
-            Err(articles_directory) => match articles_directory.canonicalize() {
-                Ok(articles_directory) => Some(AbsolutePath::new(articles_directory).unwrap()),
-                Err(error) => {
-                    error!(
-                        "An error occured while getting the full path \
-                        to the articles directory (which was changed in the config): {}",
-                        error
-                    );
-                    None
-                }
-            },
-        };
-        if let Some(articles_directory) = articles_directory {
-            if articles_directory.as_ref() == self.articles_directory.as_ref() {
-                match watch_articles(self) {
-                    Ok(new_context) => {
-                        *articles_watch_context.lock().unwrap() = new_context;
-                        reload_articles = true;
-                        reload_index = true;
-                        self.articles_directory = articles_directory;
-                    }
-                    Err(error) => {
-                        error!(
-                            "An error occured while changing the articles directory: {}",
-                            error
-                        );
+        {
+            if articles_directory != self.articles_directory.as_ref() {
+                let articles_directory = match AbsolutePath::new(articles_directory) {
+                    Ok(articles_directory) => Some(articles_directory),
+                    Err(articles_directory) => match articles_directory.canonicalize() {
+                        Ok(articles_directory) => {
+                            Some(AbsolutePath::new(articles_directory).unwrap())
+                        }
+                        Err(error) => {
+                            error!(
+                                "An error occured while getting the full path to the articles \
+                                directory (which was changed in the config): {}",
+                                error
+                            );
+                            None
+                        }
+                    },
+                };
+                if let Some(articles_directory) = articles_directory {
+                    if articles_directory.as_ref() == self.articles_directory.as_ref() {
+                        match watch_articles(self) {
+                            Ok(new_context) => {
+                                *articles_watch_context.lock().unwrap() = new_context;
+                                reload_articles = true;
+                                reload_index = true;
+                                self.articles_directory = articles_directory;
+                            }
+                            Err(error) => {
+                                error!(
+                                    "An error occured while changing the articles directory: {}",
+                                    error
+                                );
+                            }
+                        }
                     }
                 }
             }
