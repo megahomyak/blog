@@ -69,8 +69,9 @@ pub type WatchResult = Result<WatchContext, notify::Error>;
 
 /// # Panics
 /// Panics when there were some issues with the `mio`'s `EventLoop`. Don't want to handle those, to
-/// be honest. It is too hard for them to occur anyway, but when they will occur, I don't want to do
-/// anything, because __the main point__ of this program is to listen (or "watch") to file changes.
+/// be honest. It is too hard for them to occur anyway, but when they will occur, I don't want to
+/// do anything, because __the main point__ of this program is to listen (or "watch") to file
+/// changes.
 #[allow(clippy::missing_errors_doc)]
 pub fn watch(config: &Config, path: &Path, recursive_mode: RecursiveMode) -> WatchResult {
     let (event_sender, event_receiver) = mpsc::channel();
