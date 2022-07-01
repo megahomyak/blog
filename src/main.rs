@@ -1,12 +1,18 @@
 use std::{
     fs, io,
     path::{Path, PathBuf},
-    sync::{mpsc, Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc, Mutex,
+    },
     thread,
     time::Duration,
 };
 
-use actix_web::{dev::Server, web, App, HttpServer};
+use actix_web::{
+    dev::{Server, ServerHandle},
+    web, App, HttpServer,
+};
 use clap::{crate_description, Parser, Subcommand};
 use config::Config;
 use log::{error, warn};
@@ -160,6 +166,32 @@ fn begin_watching(
     });
 }
 
+#[derive(Clone)]
+pub struct CustomServerHandle {
+    server_handle: ServerHandle,
+    restart_was_requested: Arc<AtomicBool>,
+}
+
+impl CustomServerHandle {
+    #[must_use]
+    pub fn new(server_handle: ServerHandle) -> Self {
+        Self {
+            server_handle,
+            restart_was_requested: Arc::new(false.into()),
+        }
+    }
+
+    #[must_use]
+    pub fn restart_was_requested(self) -> bool {
+        self.restart_was_requested.load(Ordering::Relaxed)
+    }
+
+    pub async fn request_restart(&self) {
+        self.restart_was_requested.store(true, Ordering::Relaxed);
+        self.server_handle.stop(true).await;
+    }
+}
+
 #[actix_web::main]
 async fn main() -> io::Result<()> {
     let args = Args::parse();
@@ -290,7 +322,7 @@ async fn main() -> io::Result<()> {
 
     loop {
         let server = run_server(&website);
-        let mut server_handle = server.handle();
+        let server_handle = CustomServerHandle::new(server.handle());
 
         {
             let config_watch_context = config_watch_context.clone();
@@ -301,12 +333,13 @@ async fn main() -> io::Result<()> {
                 let config_watch_context = config_watch_context.clone();
                 let website = website.clone();
                 let articles_watch_context = articles_watch_context.clone();
+                let server_handle = server_handle.clone();
                 move || {
                     match fs::read_to_string(Path::new(CONFIG_FILE_NAME)) {
                         Ok(file_contents) => match serde_json::from_str(&file_contents) {
                             Ok(new_config) => website.lock().unwrap().config().update(
                                 new_config,
-                                &mut server_handle,
+                                &server_handle,
                                 &website,
                                 &articles_watch_context,
                                 &config_watch_context,
@@ -334,7 +367,7 @@ async fn main() -> io::Result<()> {
                 Path::new(CONFIG_FILE_NAME),
                 watch_config,
                 {
-                    let mut reload_config = reload_config.clone();
+                    let reload_config = reload_config.clone();
                     move |event| {
                         match event {
                             DebouncedEvent::Write(_path) | DebouncedEvent::Create(_path) => {
@@ -349,5 +382,9 @@ async fn main() -> io::Result<()> {
         }
 
         server.await?;
+
+        if !server_handle.restart_was_requested() {
+            break Ok(());
+        }
     }
 }

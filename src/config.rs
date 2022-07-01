@@ -4,13 +4,12 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use actix_web::dev::ServerHandle;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     absolute_path::AbsolutePath, page_colors::PageColors, utils::set_global_log_level,
-    watch_articles, watch_config, website::Website, WatchContext,
+    watch_articles, watch_config, website::Website, CustomServerHandle, WatchContext,
 };
 
 #[derive(Deserialize, Serialize)]
@@ -91,7 +90,7 @@ impl Config {
     pub fn update(
         &mut self,
         new_config: Base<PathBuf>,
-        server_handle: &mut ServerHandle,
+        server_handle: &CustomServerHandle,
         website: &Mutex<Website>,
         articles_watch_context: &Arc<Mutex<WatchContext>>,
         config_watch_context: &Arc<Mutex<WatchContext>>,
@@ -213,7 +212,7 @@ impl Config {
             tokio::runtime::Builder::new_current_thread()
                 .build()
                 .unwrap()
-                .block_on(async { server_handle.stop(true).await });
+                .block_on(async { server_handle.request_restart().await });
         }
         if reload_articles {
             website.lock().unwrap().reload_articles();
