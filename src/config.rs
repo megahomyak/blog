@@ -9,8 +9,8 @@ use log::{error, info};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    page_colors::PageColors, utils::{AbsolutePath, set_global_log_level}, watch_articles, watch_config, website::Website,
-    WatchContext,
+    page_colors::PageColors, utils::set_global_log_level, watch_articles, watch_config,
+    website::Website, WatchContext, absolute_path::AbsolutePath,
 };
 
 #[derive(Deserialize, Serialize)]
@@ -52,14 +52,16 @@ impl Base<PathBuf> {
 
     /// Upgrades itself to [`BaseConfig<AbsolutePath<PathBuf>>`],
     /// returning an error if `articles_directory.canonicalize()` failed.
-    pub fn upgrade(self) -> Result<Config, (io::Error, Self)> {
+    pub fn upgrade(mut self) -> Result<Config, (io::Error, Self)> {
         let articles_directory = {
-            if AbsolutePath::validate(&self.articles_directory).is_ok() {
-                AbsolutePath::new(self.articles_directory).unwrap()
-            } else {
-                match self.articles_directory.canonicalize() {
-                    Ok(articles_directory) => AbsolutePath::new(articles_directory).unwrap(),
-                    Err(error) => return Err((error, self)),
+            match AbsolutePath::new(self.articles_directory) {
+                Ok(articles_directory) => articles_directory,
+                Err(old_articles_directory) => match old_articles_directory.canonicalize() {
+                    Ok(old_articles_directory) => AbsolutePath::new(old_articles_directory).unwrap(),
+                    Err(error) => {
+                        self.articles_directory = old_articles_directory;
+                        return Err((error, self));
+                    },
                 }
             }
         };

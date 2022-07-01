@@ -14,6 +14,7 @@ use notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher};
 use utils::{set_global_log_level, FileNameShortcut};
 use website::Website;
 
+mod absolute_path;
 mod config;
 mod page_colors;
 mod page_compilers;
