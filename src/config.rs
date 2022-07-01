@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     absolute_path::AbsolutePath, page_colors::PageColors, utils::set_global_log_level,
-    watch_articles, watch_config, website::Website, CustomServerHandle, WatchContext,
+    watch_articles, watch_config, website::Website, CustomServerHandle, WatchContext, ArticlesWatcher, ConfigWatcher,
 };
 
 #[derive(Deserialize, Serialize)]
@@ -92,8 +92,8 @@ impl Config {
         new_config: Base<PathBuf>,
         server_handle: &CustomServerHandle,
         website: &Mutex<Website>,
-        articles_watch_context: &Arc<Mutex<WatchContext>>,
-        config_watch_context: &Arc<Mutex<WatchContext>>,
+        articles_watch_context: &Arc<Mutex<WatchContext<ArticlesWatcher>>>,
+        config_watch_context: &Arc<Mutex<WatchContext<ConfigWatcher>>>,
     ) {
         macro_rules! if_changed {
             ($field_name:ident, $body:block) => {

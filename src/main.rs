@@ -16,7 +16,7 @@ use actix_web::{
 use clap::{crate_description, Parser, Subcommand};
 use config::Config;
 use log::{error, warn};
-use notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode};
 use utils::{set_global_log_level, FileNameShortcut};
 use website::Website;
 
@@ -66,12 +66,12 @@ fn run_server(website: &Arc<Mutex<Website>>) -> Server {
     .run()
 }
 
-pub struct WatchContext {
-    _watcher: RecommendedWatcher,
+pub struct WatchContext<Watcher> {
+    _watcher: Watcher,
     event_receiver: mpsc::Receiver<DebouncedEvent>,
 }
 
-pub type WatchResult = Result<WatchContext, notify::Error>;
+pub type WatchResult<Watcher> = Result<WatchContext<Watcher>, notify::Error>;
 
 /// # Panics
 /// Panics when there were some issues with the `mio`'s `EventLoop`. Don't want to handle those, to
@@ -79,27 +79,35 @@ pub type WatchResult = Result<WatchContext, notify::Error>;
 /// do anything, because __the main point__ of this program is to listen (or "watch") to file
 /// changes.
 #[allow(clippy::missing_errors_doc)]
-pub fn watch(config: &Config, path: &Path, recursive_mode: RecursiveMode) -> WatchResult {
+pub fn watch<Watcher>(
+    config: &Config,
+    path: &Path,
+    recursive_mode: RecursiveMode,
+    watcher_maker: fn(RecommendedWatcher) -> Watcher,
+) -> WatchResult<Watcher> {
     let (event_sender, event_receiver) = mpsc::channel();
-    let mut watcher: RecommendedWatcher = Watcher::new(
+    let mut watcher: RecommendedWatcher = notify::Watcher::new(
         event_sender,
         Duration::from_millis(config.file_watcher_delay_in_milliseconds),
     )
     .unwrap();
-    watcher.watch(path, recursive_mode)?;
+    notify::Watcher::watch(&mut watcher, path, recursive_mode)?;
     Ok(WatchContext {
-        _watcher: watcher,
+        _watcher: watcher_maker(watcher),
         event_receiver,
     })
 }
 
+pub struct ArticlesWatcher(pub RecommendedWatcher);
+
 #[allow(clippy::missing_errors_doc)]
-pub fn watch_articles(config: &Config) -> WatchResult {
+pub fn watch_articles(config: &Config) -> WatchResult<ArticlesWatcher> {
     if config.articles_directory.as_ref().is_dir() {
         watch(
             config,
             config.articles_directory.as_ref(),
             RecursiveMode::Recursive,
+            ArticlesWatcher,
         )
     } else {
         Err(notify::Error::Generic(format!(
@@ -109,13 +117,16 @@ pub fn watch_articles(config: &Config) -> WatchResult {
     }
 }
 
+pub struct ConfigWatcher(pub RecommendedWatcher);
+
 #[allow(clippy::missing_errors_doc)]
-pub fn watch_config(config: &Config) -> WatchResult {
+pub fn watch_config(config: &Config) -> WatchResult<ConfigWatcher> {
     if Path::new(CONFIG_FILE_NAME).is_file() {
         watch(
             config,
             Path::new(CONFIG_FILE_NAME),
             RecursiveMode::NonRecursive,
+            ConfigWatcher,
         )
     } else {
         Err(notify::Error::Generic(format!(
@@ -135,12 +146,12 @@ macro_rules! clean_panic {
     }
 }
 
-fn begin_watching(
-    watch_context: Arc<Mutex<WatchContext>>,
+fn begin_watching<Watcher: 'static + Send>(
+    watch_context: Arc<Mutex<WatchContext<Watcher>>>,
     website: Arc<Mutex<Website>>,
     filesystem_entry_name: &'static str,
     filesystem_entry_path: impl PartialEq<PathBuf> + Send + 'static,
-    watch_context_maker: fn(&Config) -> WatchResult,
+    watch_context_maker: fn(&Config) -> WatchResult<Watcher>,
     mut event_receiver: impl FnMut(DebouncedEvent) + Send + 'static,
     mut resource_reloader: impl FnMut() + Send + 'static,
 ) {
@@ -238,18 +249,18 @@ async fn main() -> io::Result<()> {
             error
         );
     });
-    let articles_watch_context = Arc::new(Mutex::new(watch_articles(&config).unwrap_or_else(
-        |error| {
+    let articles_watch_context: Arc<Mutex<WatchContext<ArticlesWatcher>>> = Arc::new(Mutex::new(
+        watch_articles(&config).unwrap_or_else(|error| {
             clean_panic!(
                 "Articles directory `{:?}` is not accessible! Consider creating it. Details: {}",
                 config.articles_directory.as_ref(),
                 error
             );
-        },
-    )));
+        }),
+    ));
 
-    let config_watch_context = Arc::new(Mutex::new(watch_config(&config).unwrap_or_else(
-        |error| {
+    let config_watch_context: Arc<Mutex<WatchContext<ConfigWatcher>>> =
+        Arc::new(Mutex::new(watch_config(&config).unwrap_or_else(|error| {
             clean_panic!(
                 "Configuration file `{}` is not accessible! This is a really rare occasion that
                 happened here. Consider creating the configuration file (probably, using the `blog
@@ -257,8 +268,7 @@ async fn main() -> io::Result<()> {
                 CONFIG_FILE_NAME,
                 error
             );
-        },
-    )));
+        })));
 
     let website = Arc::new(Mutex::new(Website::new(config)));
 
