@@ -49,17 +49,12 @@ enum Command {
 
 const CONFIG_FILE_NAME: &str = "config.json";
 
-fn run_server(website: &Arc<Mutex<Website>>) -> Server {
-    let mut config_guard = website.lock().unwrap();
-    let config = &config_guard.config();
-    HttpServer::new({
-        let website = website.clone();
-        move || {
-            App::new()
-                .app_data(web::Data::from(website.clone()))
-                .route("/", web::get().to(routes::index))
-                .route("/{filename}", web::get().to(routes::file))
-        }
+fn run_server(website: Arc<Mutex<Website>>, config: &Config) -> Server {
+    HttpServer::new(move || {
+        App::new()
+            .app_data(web::Data::from(website.clone()))
+            .route("/", web::get().to(routes::index))
+            .route("/{filename}", web::get().to(routes::file))
     })
     .bind((&config.host_name[..], config.port))
     .unwrap()
@@ -152,7 +147,7 @@ trait CompareWithAbsolutePath {
 
 fn begin_watching<Watcher: 'static + Send>(
     watch_context: Arc<Mutex<WatchContext<Watcher>>>,
-    website: Arc<Mutex<Website>>,
+    config: Arc<Mutex<Config>>,
     filesystem_entry_name: &'static str,
     filesystem_entry_path: impl CompareWithAbsolutePath + Send + 'static,
     watch_context_maker: fn(&Config) -> WatchResult<Watcher>,
@@ -160,11 +155,18 @@ fn begin_watching<Watcher: 'static + Send>(
     mut resource_reloader: impl FnMut() + Send + 'static,
 ) {
     thread::spawn(move || loop {
-        while let Ok(event) = watch_context.lock().unwrap().event_receiver.recv() {
+        loop {
+            let event = watch_context.lock().unwrap().event_receiver.try_recv();
             match event {
-                DebouncedEvent::Remove(path) if filesystem_entry_path.compare(&path) => break,
-                event => event_receiver(event),
+                Ok(event) => match event {
+                    DebouncedEvent::NoticeRemove(path) if filesystem_entry_path.compare(&path) => {
+                        break
+                    }
+                    event => event_receiver(event),
+                },
+                Err(_error) => (),
             }
+            thread::sleep(Duration::from_secs(1));
         }
         error!(
             "{} seems to be deleted. Waiting until it will be created...",
@@ -172,7 +174,7 @@ fn begin_watching<Watcher: 'static + Send>(
         );
         loop {
             thread::sleep(Duration::from_secs(1));
-            if let Ok(new_context) = watch_context_maker(website.lock().unwrap().config()) {
+            if let Ok(new_context) = watch_context_maker(&config.lock().unwrap()) {
                 *watch_context.lock().unwrap() = new_context;
                 break;
             }
@@ -274,34 +276,28 @@ async fn main() -> io::Result<()> {
             );
         })));
 
-    let website = Arc::new(Mutex::new(Website::new(config)));
+    let config = Arc::new(Mutex::new(config));
+    let website = Arc::new(Mutex::new(Website::new(config.clone())));
 
     {
+        let config = config.clone();
         let website = website.clone();
         begin_watching(
             articles_watch_context.clone(),
-            website.clone(),
+            config.clone(),
             "Articles directory",
             {
                 struct ArticlesDirectory {
-                    owner: Arc<Mutex<Website>>,
+                    config: Arc<Mutex<Config>>,
                 }
 
                 impl CompareWithAbsolutePath for ArticlesDirectory {
                     fn compare(&self, absolute_path: &Path) -> bool {
-                        self.owner
-                            .lock()
-                            .unwrap()
-                            .config()
-                            .articles_directory
-                            .as_ref()
-                            == absolute_path
+                        self.config.lock().unwrap().articles_directory.as_ref() == absolute_path
                     }
                 }
 
-                ArticlesDirectory {
-                    owner: website.clone(),
-                }
+                ArticlesDirectory { config }
             },
             watch_articles,
             {
@@ -335,7 +331,7 @@ async fn main() -> io::Result<()> {
     }
 
     loop {
-        let server = run_server(&website);
+        let server = run_server(website.clone(), &config.lock().unwrap());
         let server_handle = CustomServerHandle::new(server.handle());
 
         {
@@ -346,12 +342,14 @@ async fn main() -> io::Result<()> {
             let reload_config = {
                 let config_watch_context = config_watch_context.clone();
                 let website = website.clone();
+                let config = config.clone();
                 let articles_watch_context = articles_watch_context.clone();
                 let server_handle = server_handle.clone();
                 move || {
                     match fs::read_to_string(Path::new(CONFIG_FILE_NAME)) {
                         Ok(file_contents) => match serde_json::from_str(&file_contents) {
-                            Ok(new_config) => website.lock().unwrap().config().update(
+                            Ok(new_config) => Config::update(
+                                &config,
                                 new_config,
                                 &server_handle,
                                 &website,
@@ -377,7 +375,7 @@ async fn main() -> io::Result<()> {
             #[allow(clippy::unit_arg)]
             begin_watching(
                 config_watch_context,
-                website.clone(),
+                config.clone(),
                 "Configuration file",
                 {
                     impl CompareWithAbsolutePath for () {

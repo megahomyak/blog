@@ -38,6 +38,8 @@ pub async fn file(
                 .lock()
                 .unwrap()
                 .config()
+                .lock()
+                .unwrap()
                 .files_directory
                 .join(&file_name[..]),
         ) {
