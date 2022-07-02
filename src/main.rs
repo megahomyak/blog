@@ -242,7 +242,7 @@ async fn main() -> io::Result<()> {
         &fs::read_to_string(Path::new(CONFIG_FILE_NAME)).unwrap_or_else(|error| {
             clean_panic!(
                 "Configuration file isn't accessble! Consider creating a sample configuration \
-                using `blog create_sample_config`, and then editing it. Details: {}",
+                using `blog create-sample-config`, and then editing it. Details: {}",
                 error
             );
         }),
