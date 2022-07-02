@@ -3,6 +3,8 @@ use std::{path::Path, sync::Arc};
 use log::error;
 use simple_logger::SimpleLogger;
 
+use crate::lower_case_string::LowerCaseString;
+
 pub trait FileNameShortcut {
     fn file_name_arc_str(&self) -> Arc<str>;
 }
@@ -13,8 +15,8 @@ impl FileNameShortcut for Path {
     }
 }
 
-pub fn set_global_log_level(log_level_name: impl AsRef<str>) {
-    let log_level_filter = match &log_level_name.as_ref().to_lowercase()[..] {
+pub fn set_global_log_level<S: AsRef<str>>(log_level_name: &LowerCaseString<S>) {
+    let log_level_filter = match log_level_name.as_ref() {
         "off" => Some(log::LevelFilter::Off),
         "error" => Some(log::LevelFilter::Error),
         "warn" => Some(log::LevelFilter::Warn),

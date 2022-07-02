@@ -22,6 +22,7 @@ use website::Website;
 
 mod absolute_path;
 mod config;
+mod lower_case_string;
 mod page_colors;
 mod page_compilers;
 mod routes;
@@ -245,7 +246,7 @@ async fn main() -> io::Result<()> {
             error
         );
     });
-    set_global_log_level(&config.log_level);
+    set_global_log_level(&config.log_level[..].into());
     let config = config.upgrade().unwrap_or_else(|(error, config)| {
         clean_panic!(
             "Articles directory path (`{:?}`) cannot be expanded! Details: {}",
