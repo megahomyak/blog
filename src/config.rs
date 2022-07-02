@@ -89,124 +89,130 @@ impl Config {
     #[allow(clippy::too_many_lines)]
     #[allow(clippy::cognitive_complexity)]
     pub fn update(
-        &mut self,
+        old_config: &Mutex<Self>,
         new_config: Base<PathBuf>,
         server_handle: &CustomServerHandle,
         website: &Mutex<Website>,
         articles_watch_context: &Arc<Mutex<WatchContext<ArticlesWatcher>>>,
         config_watch_context: &Arc<Mutex<WatchContext<ConfigWatcher>>>,
     ) {
-        macro_rules! if_changed {
-            ($field_name:ident, $body:block) => {
-                if self.$field_name != $field_name {
-                    self.$field_name = $field_name;
-                    $body
-                }
-            };
-        }
-        let Base {
-            author_name,
-            index_page_colors,
-            articles_directory,
-            files_directory,
-            date_format,
-            host_name,
-            port,
-            log_level,
-            file_watcher_delay_in_milliseconds,
-        } = new_config;
         let mut reload_articles = false;
         let mut reload_index = false;
         let mut reload_server = false;
         {
-            let host_name_was_changed = host_name != self.host_name;
-            let port_was_changed = port != self.port;
-            let target = match (host_name_was_changed, port_was_changed) {
-                (true, true) => "host name and port were",
-                (false, false) => "",
-                (false, true) => "host name was",
-                (true, false) => "port was",
-            };
-            if !target.is_empty() {
-                self.host_name = host_name;
-                self.port = port;
-                info!("{} changed. Restarting", target);
-                reload_server = true;
+            let mut old_config = old_config.lock().unwrap();
+            macro_rules! if_changed {
+                ($field_name:ident, $body:block) => {
+                    if old_config.$field_name != $field_name {
+                        $body
+                        old_config.$field_name = $field_name;
+                    }
+                };
             }
-        }
-        {
-            set_global_log_level(&log_level[..].into());
-        };
-        if_changed!(author_name, {
-            reload_articles = true;
-        });
-        if_changed!(index_page_colors, {
-            reload_index = true;
-        });
-        {
-            let articles_directory = match AbsolutePath::new(articles_directory) {
-                Ok(articles_directory) => Some(articles_directory),
-                Err(articles_directory) => match articles_directory.canonicalize() {
-                    Ok(articles_directory) => {
-                        Some(AbsolutePath::new(articles_directory).unwrap())
+            let Base {
+                author_name,
+                index_page_colors,
+                articles_directory,
+                files_directory,
+                date_format,
+                host_name,
+                port,
+                log_level,
+                file_watcher_delay_in_milliseconds,
+            } = new_config;
+            {
+                let host_name_was_changed = host_name != old_config.host_name;
+                let port_was_changed = port != old_config.port;
+                let target = match (host_name_was_changed, port_was_changed) {
+                    (true, true) => "host name and port were",
+                    (false, false) => "",
+                    (false, true) => "host name was",
+                    (true, false) => "port was",
+                };
+                if !target.is_empty() {
+                    old_config.host_name = host_name;
+                    old_config.port = port;
+                    info!("{} changed. Restarting", target);
+                    reload_server = true;
+                }
+            }
+            if_changed!(log_level, {
+                set_global_log_level(&log_level).unwrap_or_else(|error| error!("{}", error));
+            });
+            if_changed!(author_name, {
+                reload_articles = true;
+            });
+            if_changed!(index_page_colors, {
+                reload_index = true;
+            });
+            {
+                if articles_directory != old_config.articles_directory.as_ref() {
+                    let articles_directory = match AbsolutePath::new(articles_directory) {
+                        Ok(articles_directory) => Some(articles_directory),
+                        Err(articles_directory) => match articles_directory.canonicalize() {
+                            Ok(articles_directory) => {
+                                Some(AbsolutePath::new(articles_directory).unwrap())
+                            }
+                            Err(error) => {
+                                error!(
+                                    "An error occured while getting the full path to the articles \
+                                    directory (which was changed in the config): {}",
+                                    error
+                                );
+                                None
+                            }
+                        },
+                    };
+                    if let Some(articles_directory) = articles_directory {
+                        if articles_directory.as_ref() == old_config.articles_directory.as_ref() {
+                            match watch_articles(&old_config) {
+                                Ok(new_context) => {
+                                    *articles_watch_context.lock().unwrap() = new_context;
+                                    reload_articles = true;
+                                    reload_index = true;
+                                    old_config.articles_directory = articles_directory;
+                                }
+                                Err(error) => {
+                                    error!(
+                                        "An error occured while changing the articles \
+                                        directory: {}",
+                                        error
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if_changed!(files_directory, {});
+            if_changed!(date_format, {
+                reload_articles = true;
+            });
+            if_changed!(file_watcher_delay_in_milliseconds, {
+                match watch_articles(&old_config) {
+                    Ok(new_context) => {
+                        *articles_watch_context.lock().unwrap() = new_context;
                     }
                     Err(error) => {
                         error!(
-                            "An error occured while getting the full path to the articles \
-                            directory (which was changed in the config): {}",
+                            "An error occured while changing the articles watcher delay: {}",
                             error
                         );
-                        None
-                    }
-                },
-            };
-            if let Some(articles_directory) = articles_directory {
-                if articles_directory.as_ref() != self.articles_directory.as_ref() {
-                    match watch_articles(self) {
-                        Ok(new_context) => {
-                            *articles_watch_context.lock().unwrap() = new_context;
-                            reload_articles = true;
-                            reload_index = true;
-                            self.articles_directory = articles_directory;
-                        }
-                        Err(error) => {
-                            error!(
-                                "An error occured while changing the articles directory: {}",
-                                error
-                            );
-                        }
                     }
                 }
-            }
+                match watch_config(&old_config) {
+                    Ok(new_context) => {
+                        *config_watch_context.lock().unwrap() = new_context;
+                    }
+                    Err(error) => {
+                        error!(
+                            "An error occured while changing the config watcher delay: {}",
+                            error
+                        );
+                    }
+                }
+            });
         }
-        if_changed!(files_directory, {});
-        if_changed!(date_format, {
-            reload_articles = true;
-        });
-        if_changed!(file_watcher_delay_in_milliseconds, {
-            match watch_articles(self) {
-                Ok(new_context) => {
-                    *articles_watch_context.lock().unwrap() = new_context;
-                }
-                Err(error) => {
-                    error!(
-                        "An error occured while changing the articles watcher delay: {}",
-                        error
-                    );
-                }
-            }
-            match watch_config(self) {
-                Ok(new_context) => {
-                    *config_watch_context.lock().unwrap() = new_context;
-                }
-                Err(error) => {
-                    error!(
-                        "An error occured while changing the config watcher delay: {}",
-                        error
-                    );
-                }
-            }
-        });
         if reload_server {
             tokio::runtime::Builder::new_current_thread()
                 .build()

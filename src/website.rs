@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    sync::Arc,
+    sync::{Arc, Mutex, MutexGuard},
 };
 
 use chrono::{DateTime, Local};
@@ -38,7 +38,7 @@ pub struct Website {
     compiled_articles: HashMap<Arc<ArticleFileName>, MinimalArticleInfo>,
     articles_list: BTreeMap<Arc<ModificationTime>, HashMap<Arc<ArticleFileName>, ArticleTitle>>,
     index_variants: Vec<String>,
-    config: Config,
+    config: Arc<Mutex<Config>>,
 }
 pub struct IndexArticleInfo {
     pub file_name: Arc<ArticleFileName>,
@@ -46,7 +46,7 @@ pub struct IndexArticleInfo {
 }
 
 impl Website {
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: Arc<Mutex<Config>>) -> Self {
         let mut instance = Self {
             compiled_articles: HashMap::new(),
             articles_list: BTreeMap::new(),
@@ -58,7 +58,7 @@ impl Website {
     }
 
     pub fn reload_index_variants(&mut self) {
-        self.index_variants = compile_index_variants(
+        let index_variants = compile_index_variants(
             &self
                 .articles_list
                 .values()
@@ -72,8 +72,9 @@ impl Website {
                         })
                 })
                 .collect::<Vec<_>>(),
-            &self.config,
+            &self.lock_config(),
         );
+        self.index_variants = index_variants;
     }
 
     pub fn get_article(&self, file_name: &Arc<ArticleFileName>) -> Option<String> {
@@ -127,13 +128,18 @@ impl Website {
                 .unwrap()
                 .remove(file_name);
         }
-        let full_path = self.config.articles_directory.as_ref().join(&file_name[..]);
+        let full_path = self
+            .lock_config()
+            .articles_directory
+            .as_ref()
+            .join(&file_name[..]);
+        let compiled_article_info = compile_article(&full_path, &self.lock_config());
         if let Ok(CompiledArticleInfo {
             body,
             file_name,
             modification_time,
             title,
-        }) = compile_article(&full_path, &self.config)
+        }) = compiled_article_info
         {
             let modification_time = Arc::new(modification_time);
             self.compiled_articles.insert(
@@ -155,14 +161,19 @@ impl Website {
         self.reload_index_variants();
     }
 
-    pub fn config(&mut self) -> &mut Config {
-        &mut self.config
+    fn lock_config(&self) -> MutexGuard<Config> {
+        self.config.lock().unwrap()
+    }
+
+    pub const fn config(&self) -> &Arc<Mutex<Config>> {
+        &self.config
     }
 
     pub fn reload_articles(&mut self) {
         self.articles_list = BTreeMap::new();
         self.compiled_articles = HashMap::new();
-        if let Ok(article_file_names) = self.config.articles_directory.as_ref().read_dir() {
+        let articles_directory_contents = self.lock_config().articles_directory.as_ref().read_dir();
+        if let Ok(article_file_names) = articles_directory_contents {
             for entry in article_file_names {
                 let file_name: Arc<ArticleFileName> =
                     entry.unwrap().file_name().to_str().unwrap().into();
@@ -172,7 +183,7 @@ impl Website {
             error!(
                 "Articles directory `{:?}` was not found! Cannot reload the articles, \
                  using the empty list instead",
-                self.config().articles_directory.as_ref(),
+                self.lock_config().articles_directory.as_ref(),
             );
         }
     }
