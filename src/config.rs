@@ -144,38 +144,36 @@ impl Config {
             reload_index = true;
         });
         {
-            if articles_directory != self.articles_directory.as_ref() {
-                let articles_directory = match AbsolutePath::new(articles_directory) {
-                    Ok(articles_directory) => Some(articles_directory),
-                    Err(articles_directory) => match articles_directory.canonicalize() {
-                        Ok(articles_directory) => {
-                            Some(AbsolutePath::new(articles_directory).unwrap())
+            let articles_directory = match AbsolutePath::new(articles_directory) {
+                Ok(articles_directory) => Some(articles_directory),
+                Err(articles_directory) => match articles_directory.canonicalize() {
+                    Ok(articles_directory) => {
+                        Some(AbsolutePath::new(articles_directory).unwrap())
+                    }
+                    Err(error) => {
+                        error!(
+                            "An error occured while getting the full path to the articles \
+                            directory (which was changed in the config): {}",
+                            error
+                        );
+                        None
+                    }
+                },
+            };
+            if let Some(articles_directory) = articles_directory {
+                if articles_directory.as_ref() != self.articles_directory.as_ref() {
+                    match watch_articles(self) {
+                        Ok(new_context) => {
+                            *articles_watch_context.lock().unwrap() = new_context;
+                            reload_articles = true;
+                            reload_index = true;
+                            self.articles_directory = articles_directory;
                         }
                         Err(error) => {
                             error!(
-                                "An error occured while getting the full path to the articles \
-                                directory (which was changed in the config): {}",
+                                "An error occured while changing the articles directory: {}",
                                 error
                             );
-                            None
-                        }
-                    },
-                };
-                if let Some(articles_directory) = articles_directory {
-                    if articles_directory.as_ref() == self.articles_directory.as_ref() {
-                        match watch_articles(self) {
-                            Ok(new_context) => {
-                                *articles_watch_context.lock().unwrap() = new_context;
-                                reload_articles = true;
-                                reload_index = true;
-                                self.articles_directory = articles_directory;
-                            }
-                            Err(error) => {
-                                error!(
-                                    "An error occured while changing the articles directory: {}",
-                                    error
-                                );
-                            }
                         }
                     }
                 }
