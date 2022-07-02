@@ -1,6 +1,5 @@
 use std::{path::Path, sync::Arc};
 
-use log::error;
 use simple_logger::SimpleLogger;
 
 pub trait FileNameShortcut {
@@ -13,27 +12,24 @@ impl FileNameShortcut for Path {
     }
 }
 
-pub fn set_global_log_level(log_level_name: impl AsRef<str>) {
+pub fn set_global_log_level(log_level_name: impl AsRef<str>) -> Result<(), &'static str> {
     let log_level_filter = match &log_level_name.as_ref().to_lowercase()[..] {
-        "off" => Some(log::LevelFilter::Off),
-        "error" => Some(log::LevelFilter::Error),
-        "warn" => Some(log::LevelFilter::Warn),
-        "info" => Some(log::LevelFilter::Info),
-        "debug" => Some(log::LevelFilter::Debug),
-        "trace" => Some(log::LevelFilter::Trace),
+        "off" => log::LevelFilter::Off,
+        "error" => log::LevelFilter::Error,
+        "warn" => log::LevelFilter::Warn,
+        "info" => log::LevelFilter::Info,
+        "debug" => log::LevelFilter::Debug,
+        "trace" => log::LevelFilter::Trace,
         _ => {
-            error!(
+            return Err(
                 r#"Log level's lowercase representation isn't in \
-                           ["off", "error", "warn", "info", "debug", "trace"]!
-                           Using the old log level for now"#
-            );
-            None
+                ["off", "error", "warn", "info", "debug", "trace"]!"#
+            )
         }
     };
-    if let Some(log_level_filter) = log_level_filter {
-        SimpleLogger::new()
-            .with_level(log_level_filter)
-            .init()
-            .unwrap();
-    }
+    SimpleLogger::new()
+        .with_level(log_level_filter)
+        .init()
+        .unwrap();
+    Ok(())
 }

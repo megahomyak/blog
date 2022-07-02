@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     absolute_path::AbsolutePath, page_colors::PageColors, utils::set_global_log_level,
-    watch_articles, watch_config, website::Website, CustomServerHandle, WatchContext, ArticlesWatcher, ConfigWatcher,
+    watch_articles, watch_config, website::Website, ArticlesWatcher, ConfigWatcher,
+    CustomServerHandle, WatchContext,
 };
 
 #[derive(Deserialize, Serialize)]
@@ -98,8 +99,8 @@ impl Config {
         macro_rules! if_changed {
             ($field_name:ident, $body:block) => {
                 if self.$field_name != $field_name {
-                    self.$field_name = $field_name;
                     $body
+                    self.$field_name = $field_name;
                 }
             };
         }
@@ -133,9 +134,9 @@ impl Config {
                 reload_server = true;
             }
         }
-        {
-            set_global_log_level(log_level);
-        };
+        if_changed!(log_level, {
+            set_global_log_level(&log_level).unwrap_or_else(|error| error!("{}", error));
+        });
         if_changed!(author_name, {
             reload_articles = true;
         });

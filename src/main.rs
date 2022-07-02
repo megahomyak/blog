@@ -245,7 +245,7 @@ async fn main() -> io::Result<()> {
             error
         );
     });
-    set_global_log_level(&config.log_level);
+    set_global_log_level(&config.log_level).unwrap_or_else(|error| clean_panic!("{}", error));
     let config = config.upgrade().unwrap_or_else(|(error, config)| {
         clean_panic!(
             "Articles directory path (`{:?}`) cannot be expanded! Details: {}",
