@@ -146,11 +146,15 @@ macro_rules! clean_panic {
     }
 }
 
+trait CompareWithAbsolutePath {
+    fn compare(&self, absolute_path: &Path) -> bool;
+}
+
 fn begin_watching<Watcher: 'static + Send>(
     watch_context: Arc<Mutex<WatchContext<Watcher>>>,
     website: Arc<Mutex<Website>>,
     filesystem_entry_name: &'static str,
-    filesystem_entry_path: impl PartialEq<PathBuf> + Send + 'static,
+    filesystem_entry_path: impl CompareWithAbsolutePath + Send + 'static,
     watch_context_maker: fn(&Config) -> WatchResult<Watcher>,
     mut event_receiver: impl FnMut(DebouncedEvent) + Send + 'static,
     mut resource_reloader: impl FnMut() + Send + 'static,
@@ -158,7 +162,7 @@ fn begin_watching<Watcher: 'static + Send>(
     thread::spawn(move || loop {
         while let Ok(event) = watch_context.lock().unwrap().event_receiver.recv() {
             match event {
-                DebouncedEvent::Remove(path) if filesystem_entry_path == path => break,
+                DebouncedEvent::Remove(path) if filesystem_entry_path.compare(&path) => break,
                 event => event_receiver(event),
             }
         }
@@ -283,15 +287,15 @@ async fn main() -> io::Result<()> {
                     owner: Arc<Mutex<Website>>,
                 }
 
-                impl PartialEq<PathBuf> for ArticlesDirectory {
-                    fn eq(&self, other: &PathBuf) -> bool {
+                impl CompareWithAbsolutePath for ArticlesDirectory {
+                    fn compare(&self, absolute_path: &Path) -> bool {
                         self.owner
                             .lock()
                             .unwrap()
                             .config()
                             .articles_directory
                             .as_ref()
-                            == other
+                            == absolute_path
                     }
                 }
 
@@ -370,11 +374,20 @@ async fn main() -> io::Result<()> {
                 }
             };
 
+            #[allow(clippy::unit_arg)]
             begin_watching(
                 config_watch_context,
                 website.clone(),
                 "Configuration file",
-                Path::new(CONFIG_FILE_NAME),
+                {
+                    impl CompareWithAbsolutePath for () {
+                        fn compare(&self, _absolute_path: &Path) -> bool {
+                            // Config watcher is non-recursive, so the path will always be the same
+                            // (the configuration file's path)
+                            true
+                        }
+                    }
+                },
                 watch_config,
                 {
                     let reload_config = reload_config.clone();
