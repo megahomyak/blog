@@ -46,7 +46,7 @@ impl Base<PathBuf> {
             host_name: "localhost".into(),
             port: 8080,
             log_level: "info".into(),
-            file_watcher_delay_in_milliseconds: 2,
+            file_watcher_delay_in_milliseconds: 2000,
         }
     }
 
