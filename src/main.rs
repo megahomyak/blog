@@ -168,6 +168,11 @@ fn begin_watching<Watcher: 'static + Send>(
             }
             thread::sleep(Duration::from_secs(1));
         }
+        thread::sleep(Duration::from_secs(1));
+        if let Ok(new_context) = watch_context_maker(&config.lock().unwrap()) {
+            *watch_context.lock().unwrap() = new_context;
+            break;
+        }
         error!(
             "{} seems to be deleted. Waiting until it will be created...",
             filesystem_entry_name
