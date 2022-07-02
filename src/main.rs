@@ -17,6 +17,7 @@ use clap::{crate_description, Parser, Subcommand};
 use config::Config;
 use log::{error, warn};
 use notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode};
+use simple_logger::SimpleLogger;
 use utils::{set_global_log_level, FileNameShortcut};
 use website::Website;
 
@@ -168,6 +169,7 @@ fn begin_watching<Watcher: 'static + Send>(
             }
             thread::sleep(Duration::from_secs(1));
         }
+        // TODO: if a deleted thing is a directory, it is definitely deleted completely
         thread::sleep(Duration::from_secs(1));
         if let Ok(new_context) = watch_context_maker(&config.lock().unwrap()) {
             *watch_context.lock().unwrap() = new_context;
@@ -252,6 +254,7 @@ async fn main() -> io::Result<()> {
             error
         );
     });
+    SimpleLogger::new().init().unwrap();
     set_global_log_level(&config.log_level).unwrap_or_else(|error| clean_panic!("{}", error));
     let config = config.upgrade().unwrap_or_else(|(error, config)| {
         clean_panic!(
