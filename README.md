@@ -14,7 +14,7 @@ all possible re-colors, so it is very cheap and happens server-side). Neat, isn'
 
 # Why?
 
-As a school project, to practice GitHub Actions and to remember the Rust programming language.
+As a school project, to practice GitHub Actions and to recall the Rust programming language.
 
 # How?
 
