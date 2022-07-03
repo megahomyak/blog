@@ -19,6 +19,6 @@ As a school project, to practice GitHub Actions and to recall the Rust programmi
 # How?
 
 * Download the [last release](https://github.com/megahomyak/blog/releases/latest) of the program (let's assume that you renamed your executable to `blog` (or `blog.exe` on Windows))
-* Execute `blog create-sample-config` (or `blog.exe create-sample-config` on Windows) to get your configuration sample (it won't work without the configuration)
+* Execute `blog create-sample-config` to get your configuration sample (it won't work without the configuration)
 * Edit the configuration you got from the step above
-* Execute `blog run` (or `blog.exe run` on Windows) to run the web server
+* Execute `blog run` to run the web server
