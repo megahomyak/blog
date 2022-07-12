@@ -9,8 +9,7 @@ strikethrough and footnotes. The title of the article is determined by the first
 that was found in the file (if the heading wasn't found, the file name without the extension is
 used instead).
 
-Oh, and also it re-colors the index server-side every time it is accessed (done using a vector of
-all possible re-colors, so it is very cheap and happens server-side). Neat, isn't it?
+Oh, and also it re-colors the index server-side every time it is accessed. Neat, isn't it?
 
 # Why?
 
