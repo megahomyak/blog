@@ -1,3 +1,5 @@
+**THE CODE IS BAD AND WILL BE REWRITTEN SOON**
+
 # What?
 
 This server will compile each article from Markdown to HTML and store it in memory, react to
